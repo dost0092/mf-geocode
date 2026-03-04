@@ -22,9 +22,23 @@ class NominatimGeocoder(Geocoder):
     )
     def _get(self, path: str, params: dict) -> dict:
         self.limiter.wait()
-        r = self.client.get(f"{self.base}{path}", params=params)
+
+        url = f"{self.base}{path}"
+        print(f"[Nominatim] GET {url} params={params}")
+
+        r = self.client.get(url, params=params)
+
+        print(f"[Nominatim] status={r.status_code}")
+
+        if r.status_code != 200:
+            print(f"[Nominatim] body={r.text}")
+
         r.raise_for_status()
-        return r.json()
+
+        data = r.json()
+        print(f"[Nominatim] response={data}")
+
+        return data
 
     def forward(self, query: str, country_code: Optional[str] = None) -> Optional[Dict[str, Any]]:
         if not query or not query.strip():
@@ -48,9 +62,13 @@ class NominatimGeocoder(Geocoder):
             "lon": lng,
             "format": "jsonv2",
             "addressdetails": 1,
-            "zoom": 18,
+            "zoom": 10,
+            "email": "waqasdost@gmail.com"
         }
+
         data = self._get("/reverse", params)
+
         if not data or "error" in data:
             return None
+
         return data

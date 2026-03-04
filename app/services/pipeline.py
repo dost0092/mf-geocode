@@ -93,6 +93,7 @@ def run_us_missing_state_with_coords(db, limit: int, max_seconds: int) -> Dict[s
     processed = 0
     updated = 0
     failed = 0
+    updated_ids: list[str] = []
     start = time.monotonic()
 
     print(f"[Tier1A] starting batch: {len(rows)} rows, limit={limit}, max_seconds={max_seconds}")
@@ -104,14 +105,28 @@ def run_us_missing_state_with_coords(db, limit: int, max_seconds: int) -> Dict[s
 
         pk_value = row[settings.masterfile_pk]
         try:
-            payload = geocoder.reverse(float(row[settings.col_lat]), float(row[settings.col_lng]))
+            lat = float(row[settings.col_lat])
+            lng = float(row[settings.col_lng])
+
+            print(f"[Tier1A] reverse request lat={lat} lng={lng}")
+
+            payload = geocoder.reverse(lat, lng)
+
+            print(f"[Tier1A] reverse response={payload}")
+
             if not payload:
+                print(f"[Tier1A] FAILED reverse geocode id={pk_value}")
                 failed += 1
                 processed += 1
                 continue
 
             state_name = extract_state_name(payload)
+
+            print(f"[Tier1A] state_name={state_name}")
+
             state_code = normalize_state_code(db, state_name)
+
+            print(f"[Tier1A] state_code={state_code}")
             if not state_code:
                 failed += 1
                 processed += 1
@@ -133,12 +148,13 @@ def run_us_missing_state_with_coords(db, limit: int, max_seconds: int) -> Dict[s
             )
 
             updated += 1
+            updated_ids.append(str(pk_value))
             processed += 1
         except Exception:
             failed += 1
             processed += 1
 
-    return {
+    summary = {
         "mode": "missing_state_with_coords",
         "selected": len(rows),
         "processed": processed,
@@ -146,6 +162,15 @@ def run_us_missing_state_with_coords(db, limit: int, max_seconds: int) -> Dict[s
         "failed": failed,
         "stopped_by_time": (time.monotonic() - start > max_seconds),
     }
+
+    print(f"[Tier1A] summary={summary} updated_ids={updated_ids}")
+    logger.info(
+        "tier=1A mode=missing_state_with_coords summary=%s updated_ids=%s",
+        summary,
+        updated_ids,
+    )
+
+    return summary
 
 
 def run_us_missing_latlng(db, limit: int, max_seconds: int) -> Dict[str, Any]:
@@ -158,6 +183,7 @@ def run_us_missing_latlng(db, limit: int, max_seconds: int) -> Dict[str, Any]:
     processed = 0
     updated = 0
     failed = 0
+    updated_ids: list[str] = []
     start = time.monotonic()
 
     print(f"[Tier1B] starting batch: {len(rows)} rows, limit={limit}, max_seconds={max_seconds}")
@@ -218,12 +244,13 @@ def run_us_missing_latlng(db, limit: int, max_seconds: int) -> Dict[str, Any]:
             )
 
             updated += 1
+            updated_ids.append(str(pk_value))
             processed += 1
         except Exception:
             failed += 1
             processed += 1
 
-    return {
+    summary = {
         "mode": "missing_latlng",
         "selected": len(rows),
         "processed": processed,
@@ -231,6 +258,15 @@ def run_us_missing_latlng(db, limit: int, max_seconds: int) -> Dict[str, Any]:
         "failed": failed,
         "stopped_by_time": (time.monotonic() - start > max_seconds),
     }
+
+    print(f"[Tier1B] summary={summary} updated_ids={updated_ids}")
+    logger.info(
+        "tier=1B mode=missing_latlng summary=%s updated_ids=%s",
+        summary,
+        updated_ids,
+    )
+
+    return summary
 
 
 def run_tier1_us_missing_state_with_coords(db, limit: int, max_seconds: int) -> Dict[str, Any]:
