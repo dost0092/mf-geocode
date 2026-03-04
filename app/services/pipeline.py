@@ -1,4 +1,7 @@
 from typing import Dict, Any
+import logging
+import os
+import re
 import time
 
 from app.config.settings import settings
@@ -6,6 +9,16 @@ from app.services.geocoders.nominatim import NominatimGeocoder
 from app.services.state_service import normalize_state_code
 from app.services.validators import validate_candidate
 from app.services import repo
+
+
+logger = logging.getLogger("geocode_updates")
+if not logger.handlers:
+    logger.setLevel(logging.INFO)
+    os.makedirs("logs", exist_ok=True)
+    file_handler = logging.FileHandler("logs/geocode_updates.log", encoding="utf-8")
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
 
 
 def build_us_address(row: Dict[str, Any]) -> str:
@@ -35,6 +48,33 @@ def build_us_address(row: Dict[str, Any]) -> str:
     return ", ".join(p for p in parts if p and str(p).strip())
 
 
+def build_slug(row: Dict[str, Any]) -> str:
+    """
+    Build a simple slug from hotel fields (name, city, state_code, country_code).
+    """
+    parts: list[str] = []
+
+    name = row.get("name")
+    if name:
+        parts.append(str(name))
+
+    city = row.get(settings.col_city)
+    if city:
+        parts.append(str(city))
+
+    state_code = row.get(settings.col_state_code)
+    if state_code:
+        parts.append(str(state_code))
+
+    country_code = row.get(settings.col_country_code)
+    if country_code:
+        parts.append(str(country_code))
+
+    base = "-".join(parts).lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", base).strip("-")
+    return slug[:500]
+
+
 def extract_state_name(payload: Dict[str, Any]) -> str | None:
     """
     Extract a best-effort state/region name from a geocoder payload.
@@ -55,11 +95,14 @@ def run_us_missing_state_with_coords(db, limit: int, max_seconds: int) -> Dict[s
     failed = 0
     start = time.monotonic()
 
+    print(f"[Tier1A] starting batch: {len(rows)} rows, limit={limit}, max_seconds={max_seconds}")
+    logger.info("tier=1A mode=missing_state_with_coords start selected=%s", len(rows))
+
     for row in rows:
         if time.monotonic() - start > max_seconds:
             break
 
-        hotel_id = int(row[settings.masterfile_pk])
+        pk_value = row[settings.masterfile_pk]
         try:
             payload = geocoder.reverse(float(row[settings.col_lat]), float(row[settings.col_lng]))
             if not payload:
@@ -74,7 +117,21 @@ def run_us_missing_state_with_coords(db, limit: int, max_seconds: int) -> Dict[s
                 processed += 1
                 continue
 
-            repo.update_state_code(db, hotel_id, state_code)
+            repo.update_state_code(db, pk_value, state_code)
+
+            row_with_new_state = dict(row)
+            row_with_new_state[settings.col_state_code] = state_code
+            slug = build_slug(row_with_new_state)
+            repo.update_slug(db, pk_value, slug)
+
+            print(f"[Tier1A] updated id={pk_value} state_code={state_code} slug={slug}")
+            logger.info(
+                "tier=1A mode=missing_state_with_coords updated id=%s state_code=%s slug=%s",
+                pk_value,
+                state_code,
+                slug,
+            )
+
             updated += 1
             processed += 1
         except Exception:
@@ -103,11 +160,14 @@ def run_us_missing_latlng(db, limit: int, max_seconds: int) -> Dict[str, Any]:
     failed = 0
     start = time.monotonic()
 
+    print(f"[Tier1B] starting batch: {len(rows)} rows, limit={limit}, max_seconds={max_seconds}")
+    logger.info("tier=1B mode=missing_latlng start selected=%s", len(rows))
+
     for row in rows:
         if time.monotonic() - start > max_seconds:
             break
 
-        hotel_id = int(row[settings.masterfile_pk])
+        pk_value = row[settings.masterfile_pk]
 
         try:
             query = build_us_address(row)
@@ -133,7 +193,30 @@ def run_us_missing_latlng(db, limit: int, max_seconds: int) -> Dict[str, Any]:
             state_name = extract_state_name(payload)
             state_code = normalize_state_code(db, state_name)
 
-            repo.update_latlng_and_state(db, hotel_id, cand_lat, cand_lng, state_code)
+            repo.update_latlng_and_state(db, pk_value, cand_lat, cand_lng, state_code)
+
+            row_with_new_values = dict(row)
+            row_with_new_values[settings.col_lat] = cand_lat
+            row_with_new_values[settings.col_lng] = cand_lng
+            if state_code:
+                row_with_new_values[settings.col_state_code] = state_code
+
+            slug = build_slug(row_with_new_values)
+            repo.update_slug(db, pk_value, slug)
+
+            print(
+                f"[Tier1B] updated id={pk_value} "
+                f"lat={cand_lat} lng={cand_lng} state_code={state_code} slug={slug}"
+            )
+            logger.info(
+                "tier=1B mode=missing_latlng updated id=%s lat=%s lng=%s state_code=%s slug=%s",
+                pk_value,
+                cand_lat,
+                cand_lng,
+                state_code,
+                slug,
+            )
+
             updated += 1
             processed += 1
         except Exception:
