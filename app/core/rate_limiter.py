@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass
 class RateLimiter:
-    rps: float = 1.0
+    rps: float = 0.769
     _last: float = 0.0
 
     def wait(self):
