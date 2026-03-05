@@ -46,7 +46,32 @@ def build_us_address(row: Dict[str, Any]) -> str:
 
     parts.append("USA")
     return ", ".join(p for p in parts if p and str(p).strip())
+# -------------------------------------------------
+# COORDINATE EXTRACTOR (works for all providers)
+# -------------------------------------------------
 
+def extract_lat_lng(payload):
+
+    if not payload:
+        return None, None
+
+    # Nominatim
+    if "lat" in payload and "lon" in payload:
+        return float(payload["lat"]), float(payload["lon"])
+
+    # Geoapify
+    if "properties" in payload:
+        props = payload["properties"]
+        if "lat" in props and "lon" in props:
+            return float(props["lat"]), float(props["lon"])
+
+    # OpenCage
+    if "geometry" in payload:
+        geo = payload["geometry"]
+        if "lat" in geo and "lng" in geo:
+            return float(geo["lat"]), float(geo["lng"])
+
+    return None, None
 
 def _strip_component(value: str | None) -> str:
     """Strip a slug component to a-z0-9, encoding non-ASCII as UTF-8 hex."""
@@ -226,8 +251,9 @@ def run_us_missing_latlng(db, limit: int, max_seconds: int) -> Dict[str, Any]:
                 processed += 1
                 continue
 
-            cand_lat = float(payload.get("lat")) if payload.get("lat") is not None else None
-            cand_lng = float(payload.get("lon")) if payload.get("lon") is not None else None
+            cand_lat, cand_lng = extract_lat_lng(payload)
+
+            print(f"[Tier1B] forward response lat={cand_lat} lng={cand_lng}")
             if cand_lat is None or cand_lng is None:
                 failed += 1
                 processed += 1
