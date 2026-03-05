@@ -48,32 +48,52 @@ def build_us_address(row: Dict[str, Any]) -> str:
     return ", ".join(p for p in parts if p and str(p).strip())
 
 
-def build_slug(row: Dict[str, Any]) -> str:
-    """
-    Build a simple slug from hotel fields (name, city, state_code, country_code).
-    """
-    parts: list[str] = []
+def _strip_component(value: str | None) -> str:
+    """Strip a slug component to a-z0-9, encoding non-ASCII as UTF-8 hex."""
+    if not value:
+        return "null"
 
-    name = row.get("name")
-    if name:
-        parts.append(str(name))
+    result = ""
+    for c in value.lower():
+        if re.match(r"[a-z0-9]", c):
+            result += c
+        elif ord(c) > 127:
+            result += c.encode("utf-8").hex()
 
+    return result or "null"
+
+
+def generate_kruiz_slug(hotel_name, country=None, state=None, city=None, address=None):
+    return "-".join([
+        _strip_component(country),
+        _strip_component(state),
+        _strip_component(city),
+        _strip_component(hotel_name),
+        _strip_component(address),
+    ])
+
+
+def build_slug(row):
+    """
+    Build slug using Kruizy format:
+    country-state-city-hotelname-address
+    """
+
+    hotel_name = row.get("name")
+    country = row.get(settings.col_country_code)
+    state = row.get(settings.col_state_code)
     city = row.get(settings.col_city)
-    if city:
-        parts.append(str(city))
 
-    state_code = row.get(settings.col_state_code)
-    if state_code:
-        parts.append(str(state_code))
+    # address line
+    address = row.get(settings.col_address1)
 
-    country_code = row.get(settings.col_country_code)
-    if country_code:
-        parts.append(str(country_code))
-
-    base = "-".join(parts).lower()
-    slug = re.sub(r"[^a-z0-9]+", "-", base).strip("-")
-    return slug[:500]
-
+    return generate_kruiz_slug(
+        hotel_name,
+        country,
+        state,
+        city,
+        address
+    )
 
 def extract_state_name(payload: Dict[str, Any]) -> str | None:
     """
@@ -136,6 +156,8 @@ def run_us_missing_state_with_coords(db, limit: int, max_seconds: int) -> Dict[s
 
             row_with_new_state = dict(row)
             row_with_new_state[settings.col_state_code] = state_code
+            print("ROW:", row_with_new_state)
+            print("STATE:", row_with_new_state.get(settings.col_state_code))
             slug = build_slug(row_with_new_state)
             repo.update_slug(db, pk_value, slug)
 

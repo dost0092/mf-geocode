@@ -6,3 +6,5 @@ pydantic-settings==2.5.2
 httpx==0.27.2
 tenacity==9.0.0
 python-dotenv==1.0.1
+
+opencage==3.0.4
