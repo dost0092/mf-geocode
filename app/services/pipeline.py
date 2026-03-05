@@ -131,6 +131,7 @@ def run_us_missing_state_with_coords(db, limit: int, max_seconds: int) -> Dict[s
             print(f"[Tier1A] reverse request lat={lat} lng={lng}")
 
             payload = geocoder.reverse(lat, lng)
+            time.sleep(1.2)
 
             print(f"[Tier1A] reverse response={payload}")
 

@@ -1,43 +1,75 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, BackgroundTasks
 from sqlalchemy.orm import Session
-
 from app.core.db import get_db
 from app.config.settings import settings
 from app.services.pipeline import run_us_missing_state_with_coords, run_us_missing_latlng
+from app.services.geocoders.nominatim import NominatimGeocoder
+import asyncio
 
 router = APIRouter(prefix="/geocode", tags=["geocode"])
+
+# Create a geocoder instance (with Nominatim → Geoapify → OpenCage fallback)
+geocoder = NominatimGeocoder()
 
 @router.get("/health")
 def health():
     return {"ok": True}
 
+
+async def async_run_us(mode: str, limit: int, max_seconds: int, commit: bool):
+    """
+    Run geocoding asynchronously in batches.
+    """
+    batch_size = 100  # adjust for your APIs
+    remaining = limit
+
+    # Use a DB session per batch
+    from app.core.db import SessionLocal
+    while remaining > 0:
+        batch_limit = min(batch_size, remaining)
+        with SessionLocal() as db:
+            if mode == "missing_state_with_coords":
+                rows = run_us_missing_state_with_coords(db, limit=batch_limit, max_seconds=max_seconds)
+            elif mode == "missing_latlng":
+                rows = run_us_missing_latlng(db, limit=batch_limit, max_seconds=max_seconds)
+            else:
+                break
+
+            # Optionally commit or rollback
+            if commit:
+                db.commit()
+            else:
+                db.rollback()
+
+        remaining -= batch_limit
+        await asyncio.sleep(0.5)  # small pause between batches
+
+
 @router.get("/us/run")
-def run_us(
+async def run_us(
+    background_tasks: BackgroundTasks,
     mode: str = Query("missing_state_with_coords", description="missing_state_with_coords | missing_latlng"),
     limit: int = Query(None, ge=1, le=5000),
     max_seconds: int = Query(None, ge=5, le=120),
     commit: bool = Query(True, description="If false, rolls back after processing"),
-    db: Session = Depends(get_db),
 ):
+    """
+    Trigger geocoding in background.
+    """
     limit = limit or settings.default_limit
     max_seconds = max_seconds or settings.default_max_seconds
 
-    if mode == "missing_state_with_coords":
-        summary = run_us_missing_state_with_coords(db, limit=limit, max_seconds=max_seconds)
-    elif mode == "missing_latlng":
-        summary = run_us_missing_latlng(db, limit=limit, max_seconds=max_seconds)
-    else:
-        return {"error": f"unknown mode: {mode}"}
+    # Run as background task
+    background_tasks.add_task(async_run_us, mode, limit, max_seconds, commit)
 
-    if settings.dry_run or not commit:
-        db.rollback()
-        summary["committed"] = False
-        summary["dry_run"] = True if settings.dry_run else False
-        return summary
+    return {
+        "status": "started",
+        "mode": mode,
+        "limit": limit,
+        "max_seconds": max_seconds,
+        "message": "Geocoding is running in the background. No need to hit again."
+    }
 
-    db.commit()
-    summary["committed"] = True
-    return summary
 
 @router.get("/us/stats")
 def us_stats(db: Session = Depends(get_db)):
