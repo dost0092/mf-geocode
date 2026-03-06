@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     # ==============================
     # Masterfile Table Configuration
     # ==============================
-    masterfile_schema: str = "ingestion"
+    masterfile_schema: str = "test"
     masterfile_table: str = "hotel_masterfile"
     masterfile_pk: str = "id"
 
